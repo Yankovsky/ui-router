@@ -249,6 +249,24 @@ function $StateRefDynamicDirective($state, $timeout) {
  *   </li>
  * </ul>
  * </pre>
+ *
+ * It is also possible to pass ui-sref-active an expression that evaluates
+ * to an object hash, whose keys represent active class names and whose
+ * values represent the respective state names/globs.
+ * ui-sref-active will match if the current active state **includes** any of
+ * the specified state names/globs, even the abstract ones.
+ *
+ * @Example
+ * Given the following template, with "admin" being an abstract state:
+ * <pre>
+ * <div ui-sref-active="{'active': 'admin.*'}">
+ *   <a ui-sref-active="active" ui-sref="admin.roles">Roles</a>
+ * </div>
+ * </pre>
+ *
+ * When the current state is "admin.roles" the "active" class will be applied
+ * to both the <div> and <a> elements. It is important to note that the state
+ * names/globs passed to ui-sref-active shadow the state provided by ui-sref.
  */
 
 /**
@@ -271,25 +289,48 @@ function $StateRefActiveDirective($state, $stateParams, $interpolate) {
   return  {
     restrict: "A",
     controller: ['$scope', '$element', '$attrs', '$timeout', function ($scope, $element, $attrs, $timeout) {
-      var states = [], activeClass, activeEqClass;
+      var states = [], activeClasses = {}, activeEqClass;
 
       // There probably isn't much point in $observing this
       // uiSrefActive and uiSrefActiveEq share the same directive object with some
       // slight difference in logic routing
-      activeClass = $interpolate($attrs.uiSrefActive || '', false)($scope);
       activeEqClass = $interpolate($attrs.uiSrefActiveEq || '', false)($scope);
+
+      var uiSrefActive = $scope.$eval($attrs.uiSrefActive) || $interpolate($attrs.uiSrefActive || '', false)($scope);
+      if (isObject(uiSrefActive)) {
+        forEach(uiSrefActive, function(stateOrName, activeClass) {
+          if (isString(stateOrName)) {
+            var ref = parseStateRef(stateOrName, $state.current.name);
+            addState(ref.state, $scope.$eval(ref.paramExpr), activeClass);
+          }
+        });
+      }
 
       // Allow uiSref to communicate with uiSrefActive[Equals]
       this.$$addStateInfo = function (newState, newParams) {
-        var state = $state.get(newState, stateContext($element));
-
-        states.push({
-          state: state || { name: newState },
-          params: newParams
-        });
-
+        // we already got an explicit state provided by ui-sref-active, so we
+        // shadow the one that comes from ui-sref
+        if (isObject(uiSrefActive) && states.length > 0) {
+          return;
+        }
+        addState(newState, newParams, uiSrefActive);
         update();
       };
+
+      $scope.$on('$stateChangeSuccess', update);
+
+      function addState(stateName, stateParams, activeClass) {
+        var state = $state.get(stateName, stateContext($element));
+        var stateHash = createStateHash(stateName, stateParams);
+
+        states.push({
+          state: state || { name: stateName },
+          params: stateParams,
+          hash: stateHash
+        });
+
+        activeClasses[stateHash] = activeClass;
+      }
 
       $scope.$on('$stateChangeSuccess', update);
       $scope.$on('$locationChangeSuccess', update);
@@ -298,9 +339,9 @@ function $StateRefActiveDirective($state, $stateParams, $interpolate) {
       function update() {
         for (var i = 0; i < states.length; i++) {
           if (anyMatch(states[i].state, states[i].params)) {
-            addClass($element, activeClass);
+            addClass($element, activeClasses[states[i].hash]);
           } else {
-            removeClass($element, activeClass);
+            removeClass($element, activeClasses[states[i].hash]);
           }
 
           if (exactMatch(states[i].state, states[i].params)) {

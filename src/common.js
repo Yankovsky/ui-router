@@ -10,7 +10,8 @@ var isDefined = angular.isDefined,
     isDate = angular.isDate,
     forEach = angular.forEach,
     extend = angular.extend,
-    copy = angular.copy;
+    copy = angular.copy,
+    toJson = angular.toJson;
 
 function inherit(parent, extra) {
   return extend(new (extend(function() {}, { prototype: parent }))(), extra);
