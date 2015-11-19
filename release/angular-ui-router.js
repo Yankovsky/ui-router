@@ -1,6 +1,6 @@
 /**
  * State-based routing for AngularJS
- * @version v0.2.15
+ * @version v0.2.15-dev-2015-11-19
  * @link http://angular-ui.github.com/
  * @license MIT License, http://www.opensource.org/licenses/MIT
  */
@@ -20,6 +20,7 @@ var isDefined = angular.isDefined,
     isString = angular.isString,
     isObject = angular.isObject,
     isArray = angular.isArray,
+    isDate = angular.isDate,
     forEach = angular.forEach,
     extend = angular.extend,
     copy = angular.copy;
@@ -139,7 +140,11 @@ function equalForKeys(a, b, keys) {
 
   for (var i=0; i<keys.length; i++) {
     var k = keys[i];
-    if (a[k] != b[k]) return false; // Not '===', values aren't necessarily normalized
+    if (isDate(a[k]) && isDate(b[k])) {
+      if (a[k].getTime() !== b[k].getTime()) return false;
+    } else {
+      if (a[k] != b[k]) return false; // Not '===', values aren't necessarily normalized
+    }
   }
   return true;
 }
@@ -4293,6 +4298,7 @@ function $StateRefActiveDirective($state, $stateParams, $interpolate) {
       };
 
       $scope.$on('$stateChangeSuccess', update);
+      $scope.$on('$locationChangeSuccess', update);
 
       // Update route state
       function update() {
