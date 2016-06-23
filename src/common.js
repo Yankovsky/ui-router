@@ -7,6 +7,7 @@ var isDefined = angular.isDefined,
     isString = angular.isString,
     isObject = angular.isObject,
     isArray = angular.isArray,
+    isDate = angular.isDate,
     forEach = angular.forEach,
     extend = angular.extend,
     copy = angular.copy,
@@ -97,7 +98,7 @@ function inheritParams(currentParams, newParams, $current, $to) {
   var parents = ancestors($current, $to), parentParams, inherited = {}, inheritList = [];
 
   for (var i in parents) {
-    if (!parents[i].params) continue;
+    if (!parents[i] || !parents[i].params) continue;
     parentParams = objectKeys(parents[i].params);
     if (!parentParams.length) continue;
 
@@ -127,7 +128,11 @@ function equalForKeys(a, b, keys) {
 
   for (var i=0; i<keys.length; i++) {
     var k = keys[i];
-    if (a[k] != b[k]) return false; // Not '===', values aren't necessarily normalized
+    if (isDate(a[k]) && isDate(b[k])) {
+      if (a[k].getTime() !== b[k].getTime()) return false;
+    } else {
+      if (a[k] != b[k]) return false; // Not '===', values aren't necessarily normalized
+    }
   }
   return true;
 }

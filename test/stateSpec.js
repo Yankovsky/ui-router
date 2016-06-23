@@ -111,7 +111,7 @@ describe('state', function () {
         }
       })
       .state('resolveTimeout', {
-        url: "/:foo",
+        url: "/resolve-timeout/:foo",
         resolve: {
           value: function ($timeout) {
             return $timeout(function() { log += "Success!"; }, 1);
@@ -244,6 +244,28 @@ describe('state', function () {
       expect($stateParams).toEqual({term: 'goodbye'});
       expect($location.url()).toEqual("/search?term=goodbye");
       expect(called).toBeFalsy();
+    }));
+
+    // Test for issue #2356
+    it('retains reloadOnSearch (dynamic) parameters after going to child, then back to reloadOnSearch state', inject(function ($state, $q, $stateParams, $location, $rootScope){
+      stateProvider.state('RS.child', { url: "/child", template: 'woo' });
+      initStateTo(RS);
+
+      var called;
+      $rootScope.$on('$stateChangeStart', function () { called = true });
+      $state.go(".", { term: 'goodbye' }); $q.flush();
+      expect($stateParams).toEqual({term: 'goodbye'});
+      expect($location.url()).toEqual("/search?term=goodbye");
+      expect(called).toBeFalsy();
+
+      $state.go("RS.child"); $q.flush();
+      expect($stateParams).toEqual({term: 'goodbye'});
+      expect($location.url()).toEqual("/search/child?term=goodbye");
+      expect(called).toBeTruthy();
+
+      $state.go("RS"); $q.flush();
+      expect($stateParams).toEqual({term: 'goodbye'});
+      expect($location.url()).toEqual("/search?term=goodbye");
     }));
 
     it('does trigger state change for path params even if reloadOnSearch is false', inject(function ($state, $q, $location, $rootScope){
@@ -569,6 +591,18 @@ describe('state', function () {
       $q.flush();
       expect($location.url()).toBe('/front/world#frag');
       expect($location.hash()).toBe('frag');
+    }));
+    
+    it('has access to the #fragment in $stateChangeStart hook', inject(function ($state, $q, $location, $rootScope) {
+        var hash_accessible = false;
+        $rootScope.$on('$stateChangeStart', function (event, toState, toParams, fromState, fromParams) {
+            hash_accessible = toParams['#'] === 'frag';
+        });
+        
+        $state.transitionTo('home.item', {id: 'world', '#': 'frag'});
+        $q.flush();
+        
+        expect(hash_accessible).toBe(true);
     }));
   });
 
@@ -1089,6 +1123,21 @@ describe('state', function () {
       expect($state.params).toEqual({ param: "100", param2: "200", param3: "300", param4: "400" });
       expect(count).toEqual(2);
     }));
+
+    // test for #2025
+    it("should be applied on transitions to children, even if the params state has no url", inject(function($state, $q) {
+      var count = 0;
+      stateProvider.state('nourl', { params: { x: null } });
+      stateProvider.state('nourl.child', { url: "/child" });
+      $state.go("nourl", { x: "FOO" }); $q.flush();
+
+      expect($state.current.name).toBe("nourl");
+      expect($state.params).toEqualData({ x: "FOO" });
+
+      $state.go("nourl.child", { x: "FOO" }); $q.flush();
+      expect($state.current.name).toBe("nourl.child");
+      expect($state.params).toEqualData({ x: "FOO" });
+    }));
   });
 
   // TODO: Enforce by default in next major release (1.0.0)
@@ -1156,6 +1205,82 @@ describe('state', function () {
       $rootScope.$apply();
       expect($state.current.name).toBe('');
     }));
+
+
+    // Tests for issue #2339
+    describe("slashes in parameter values", function() {
+
+      var $rootScope, $state, $compile;
+      beforeEach(function () {
+
+        stateProvider.state('myState', {
+          url: '/my-state?:previous',
+          controller: function () {
+            log += 'myController;';
+          }
+        });
+
+        inject(function (_$rootScope_, _$state_, _$compile_) {
+          $rootScope = _$rootScope_;
+          $state = _$state_;
+          $compile = _$compile_;
+        });
+        spyOn($state, 'go').andCallThrough();
+        spyOn($state, 'transitionTo').andCallThrough();
+        $compile('<div><div ui-view/></div>')($rootScope);
+        log = '';
+      });
+
+      describe('with no "/" in the params', function () {
+        beforeEach(function () {
+          $state.go('myState',{previous: 'last'});
+          $rootScope.$digest();
+        });
+        it('should call $state.go once', function() {
+          expect($state.go.calls.length).toBe(1);
+        });
+        it('should call $state.transitionTo once', function() {
+          expect($state.transitionTo.calls.length).toBe(1);
+        });
+        it('should call myController once', function() {
+          expect(log).toBe('myController;');
+        });
+      });
+
+      describe('with a "/" in the params', function () {
+        beforeEach(function () {
+          $state.go('myState',{previous: '/last'});
+          $rootScope.$digest();
+        });
+        it('should call $state.go once', function() {
+          expect($state.go.calls.length).toBe(1);
+        });
+        it('should call $state.transitionTo once', function() {
+          expect($state.transitionTo.calls.length).toBe(1);
+        });
+        it('should call myController once', function() {
+          expect(log).toBe('myController;');
+        });
+      });
+
+      describe('with an encoded "/" in the params', function () {
+        beforeEach(function () {
+          $state.go('myState',{previous: encodeURIComponent('/last')});
+          $rootScope.$digest();
+        });
+        it('should call $state.go once', function() {
+          expect($state.go.calls.length).toBe(1);
+        });
+        it('should call $state.transitionTo once', function() {
+          expect($state.transitionTo.calls.length).toBe(1);
+        });
+        it('should call myController once', function() {
+          expect(log).toBe('myController;');
+        });
+      });
+    });
+
+
 
     describe("typed parameter handling", function() {
       beforeEach(function () {
@@ -1536,5 +1661,33 @@ describe('$stateParams', function () {
   }));
   it('should be cleared between tests', inject(function ($stateParams) {
     expect($stateParams.foo).toBeUndefined();
+  }));
+});
+
+// Test for #600, #2238, #2229
+describe('otherwise and state redirects', function() {
+  beforeEach(module(function ($stateProvider, $urlRouterProvider) {
+    $urlRouterProvider.otherwise('/home');
+    $stateProvider
+        .state('home', { url: '/home', template: 'home' })
+        .state('loginPage', { url: '/login', templateUrl: 'login.html' });
+  }));
+
+  beforeEach(inject(function ($rootScope, $state) {
+    $rootScope.$on('$stateChangeStart', function (event, toState) {
+      if (toState.name !== "loginPage") {
+        event.preventDefault();
+        $state.go('loginPage', { redirectUrl: toState.name });
+      }
+    });
+  }));
+
+  it("should not go into an infinite loop", inject(function($location, $rootScope, $state, $urlRouter, $httpBackend) {
+    $httpBackend.expectGET("login.html").respond("login page");
+    $location.url("notmatched");
+    $urlRouter.update(true);
+    expect(function() { $rootScope.$digest(); }).not.toThrow();
+    expect(function() { $httpBackend.flush(); }).not.toThrow();
+    expect($state.current.name).toBe("loginPage")
   }));
 });

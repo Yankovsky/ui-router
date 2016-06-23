@@ -76,13 +76,13 @@ function UrlMatcher(pattern, config, parentMatcher) {
   // The regular expression is somewhat complicated due to the need to allow curly braces
   // inside the regular expression. The placeholder regexp breaks down as follows:
   //    ([:*])([\w\[\]]+)              - classic placeholder ($1 / $2) (search version has - for snake-case)
-  //    \{([\w\[\]]+)(?:\:( ... ))?\}  - curly brace placeholder ($3) with optional regexp/type ... ($4) (search version has - for snake-case
+  //    \{([\w\[\]]+)(?:\:\s*( ... ))?\}  - curly brace placeholder ($3) with optional regexp/type ... ($4) (search version has - for snake-case
   //    (?: ... | ... | ... )+         - the regexp consists of any number of atoms, an atom being either
   //    [^{}\\]+                       - anything other than curly braces or backslash
   //    \\.                            - a backslash escape
   //    \{(?:[^{}\\]+|\\.)*\}          - a matched set of curly braces containing other atoms
-  var placeholder       = /([:*])([\w\[\]]+)|\{([\w\[\]]+)(?:\:((?:[^{}\\]+|\\.|\{(?:[^{}\\]+|\\.)*\})+))?\}/g,
-      searchPlaceholder = /([:]?)([\w\[\]-]+)|\{([\w\[\]-]+)(?:\:((?:[^{}\\]+|\\.|\{(?:[^{}\\]+|\\.)*\})+))?\}/g,
+  var placeholder       = /([:*])([\w\[\]]+)|\{([\w\[\]]+)(?:\:\s*((?:[^{}\\]+|\\.|\{(?:[^{}\\]+|\\.)*\})+))?\}/g,
+      searchPlaceholder = /([:]?)([\w\[\].-]+)|\{([\w\[\].-]+)(?:\:\s*((?:[^{}\\]+|\\.|\{(?:[^{}\\]+|\\.)*\})+))?\}/g,
       compiled = '^', last = 0, m,
       segments = this.segments = [],
       parentParams = parentMatcher ? parentMatcher.params : {},
@@ -92,7 +92,7 @@ function UrlMatcher(pattern, config, parentMatcher) {
   function addParameter(id, type, config, location) {
     paramNames.push(id);
     if (parentParams[id]) return parentParams[id];
-    if (!/^\w+(-+\w+)*(?:\[\])?$/.test(id)) throw new Error("Invalid parameter name '" + id + "' in pattern '" + pattern + "'");
+    if (!/^\w+([-.]+\w+)*(?:\[\])?$/.test(id)) throw new Error("Invalid parameter name '" + id + "' in pattern '" + pattern + "'");
     if (params[id]) throw new Error("Duplicate parameter name '" + id + "' in pattern '" + pattern + "'");
     params[id] = new $$UMFP.Param(id, type, config, location);
     return params[id];
@@ -256,20 +256,29 @@ UrlMatcher.prototype.exec = function (path, searchParams) {
     return map(allReversed, unquoteDashes).reverse();
   }
 
+  var param, paramVal;
   for (i = 0; i < nPath; i++) {
     paramName = paramNames[i];
-    var param = this.params[paramName];
-    var paramVal = m[i+1];
+    param = this.params[paramName];
+    paramVal = m[i+1];
     // if the param value matches a pre-replace pair, replace the value before decoding.
-    for (j = 0; j < param.replace; j++) {
+    for (j = 0; j < param.replace.length; j++) {
       if (param.replace[j].from === paramVal) paramVal = param.replace[j].to;
     }
     if (paramVal && param.array === true) paramVal = decodePathArray(paramVal);
+    if (isDefined(paramVal)) paramVal = param.type.decode(paramVal);
     values[paramName] = param.value(paramVal);
   }
   for (/**/; i < nTotal; i++) {
     paramName = paramNames[i];
     values[paramName] = this.params[paramName].value(searchParams[paramName]);
+    param = this.params[paramName];
+    paramVal = searchParams[paramName];
+    for (j = 0; j < param.replace.length; j++) {
+      if (param.replace[j].from === paramVal) paramVal = param.replace[j].to;
+    }
+    if (isDefined(paramVal)) paramVal = param.type.decode(paramVal);
+    values[paramName] = param.value(paramVal);
   }
 
   return values;
@@ -368,6 +377,7 @@ UrlMatcher.prototype.format = function (values) {
     } else {
       if (encoded == null || (isDefaultValue && squash !== false)) continue;
       if (!isArray(encoded)) encoded = [ encoded ];
+      if (encoded.length === 0) continue;
       encoded = map(encoded, encodeURIComponent).join('&' + name + '=');
       result += (search ? '&' : '?') + (name + '=' + encoded);
       search = true;
@@ -532,6 +542,7 @@ Type.prototype.$asArray = function(mode, isSearch) {
     // Wraps type (.is/.encode/.decode) functions to operate on each value of an array
     function arrayHandler(callback, allTruthyMode) {
       return function handleArray(val) {
+        if (isArray(val) && val.length === 0) return val;
         val = arrayWrap(val);
         var result = map(val, callback);
         if (allTruthyMode === true)
@@ -580,11 +591,15 @@ function $UrlMatcherFactory() {
 
   var isCaseInsensitive = false, isStrictMode = true, defaultSquashPolicy = false;
 
-  function valToString(val) { return val != null ? val.toString().replace(/\//g, "%2F") : val; }
-  function valFromString(val) { return val != null ? val.toString().replace(/%2F/g, "/") : val; }
+  // Use tildes to pre-encode slashes.
+  // If the slashes are simply URLEncoded, the browser can choose to pre-decode them,
+  // and bidirectional encoding/decoding fails.
+  // Tilde was chosen because it's not a RFC 3986 section 2.2 Reserved Character
+  function valToString(val) { return val != null ? val.toString().replace(/~/g, "~~").replace(/\//g, "~2F") : val; }
+  function valFromString(val) { return val != null ? val.toString().replace(/~2F/g, "/").replace(/~~/g, "~") : val; }
 
   var $types = {}, enqueue = true, typeQueue = [], injector, defaultTypes = {
-    string: {
+    "string": {
       encode: valToString,
       decode: valFromString,
       // TODO: in 1.0, make string .is() return false if value is undefined/null by default.
@@ -592,19 +607,19 @@ function $UrlMatcherFactory() {
       is: function(val) { return val == null || !isDefined(val) || typeof val === "string"; },
       pattern: /[^/]*/
     },
-    int: {
+    "int": {
       encode: valToString,
       decode: function(val) { return parseInt(val, 10); },
       is: function(val) { return isDefined(val) && this.decode(val.toString()) === val; },
       pattern: /\d+/
     },
-    bool: {
+    "bool": {
       encode: function(val) { return val ? 1 : 0; },
       decode: function(val) { return parseInt(val, 10) !== 0; },
       is: function(val) { return val === true || val === false; },
       pattern: /0|1/
     },
-    date: {
+    "date": {
       encode: function (val) {
         if (!this.is(val))
           return undefined;
@@ -623,14 +638,14 @@ function $UrlMatcherFactory() {
       pattern: /[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[1-2][0-9]|3[0-1])/,
       capture: /([0-9]{4})-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1])/
     },
-    json: {
+    "json": {
       encode: angular.toJson,
       decode: angular.fromJson,
       is: angular.isObject,
       equals: angular.equals,
       pattern: /[^/]*/
     },
-    any: { // does not encode/decode
+    "any": { // does not encode/decode
       encode: angular.identity,
       decode: angular.identity,
       equals: angular.equals,
